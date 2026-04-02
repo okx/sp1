@@ -15,7 +15,14 @@ use reqwest_middleware::ClientWithMiddleware as HttpClientWithMiddleware;
 use serde::{de::DeserializeOwned, Serialize};
 use sp1_core_machine::io::SP1Stdin;
 use sp1_prover::{HashableKey, SP1VerifyingKey};
-use tonic::{transport::Channel, Code};
+use tonic::{codegen::InterceptedService, transport::Channel, Code};
+
+use super::gateway::GatewayInterceptor;
+
+/// A gRPC channel wrapped with the gateway interceptor.  When no gateway is
+/// configured the interceptor is a no-op pass-through and this behaves
+/// identically to a bare [`Channel`].
+pub(crate) type GrpcChannel = InterceptedService<Channel, GatewayInterceptor>;
 
 use super::{
     grpc,
@@ -75,6 +82,9 @@ pub struct NetworkClient {
     pub(crate) http: HttpClientWithMiddleware,
     pub(crate) rpc_url: String,
     pub(crate) network_mode: NetworkMode,
+    /// Interceptor for gRPC calls. When no gateway is configured this is a
+    /// zero-cost pass-through.
+    pub(crate) gateway_interceptor: GatewayInterceptor,
 }
 
 #[async_trait]
@@ -107,17 +117,27 @@ impl RetryableRpc for NetworkClient {
 
 impl NetworkClient {
     /// Creates a new [`NetworkClient`] with the given signer, rpc url, and network mode.
+    ///
+    /// When `SP1_GATEWAY_HOST` is set, a gRPC interceptor is stored for later use
+    /// and HTTP helper methods will rewrite URLs and inject gateway headers
+    /// per-request.
     pub fn new(
         signer: NetworkSigner,
         rpc_url: impl Into<String>,
         network_mode: NetworkMode,
     ) -> Self {
+        let rpc_url: String = rpc_url.into();
+
         let client = reqwest::Client::builder()
             .pool_max_idle_per_host(0)
             .pool_idle_timeout(Duration::from_secs(240))
             .build()
             .unwrap();
-        Self { signer, http: client.into(), rpc_url: rpc_url.into(), network_mode }
+
+        // Build gRPC interceptor (no-op pass-through when gateway is not configured).
+        let gateway_interceptor = super::gateway::make_interceptor(&rpc_url);
+
+        Self { signer, http: client.into(), rpc_url, network_mode, gateway_interceptor }
     }
 
     /// Get the explorer URL for the current network mode.
@@ -710,11 +730,52 @@ impl NetworkClient {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Gateway-aware HTTP helpers
+    // -----------------------------------------------------------------------
+
+    /// Build a PUT request.  When the gateway is configured the URL is
+    /// rewritten and `third-host` / `third-token` / `source-service` headers
+    /// are injected with the *original* URL's host as `third-host`.
+    fn gateway_put(&self, url: &str) -> reqwest_middleware::RequestBuilder {
+        match super::gateway::build_gateway_headers(url) {
+            Some(headers) => {
+                let rewritten = super::gateway::rewrite_url_for_gateway(url);
+                self.http.put(rewritten).headers(headers)
+            }
+            None => self.http.put(url),
+        }
+    }
+
+    /// Build a GET request with the same gateway logic as [`Self::gateway_put`].
+    fn gateway_get(&self, url: &str) -> reqwest_middleware::RequestBuilder {
+        match super::gateway::build_gateway_headers(url) {
+            Some(headers) => {
+                let rewritten = super::gateway::rewrite_url_for_gateway(url);
+                self.http.get(rewritten).headers(headers)
+            }
+            None => self.http.get(url),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // gRPC channel helpers
+    // -----------------------------------------------------------------------
+
+    /// Wrap a raw [`Channel`] with the gateway interceptor.
+    fn connect_with_interceptor(
+        &self,
+        channel: Channel,
+    ) -> GrpcChannel {
+        InterceptedService::new(channel, self.gateway_interceptor.clone())
+    }
+
     // NetworkMode-aware generic client for shared operations (create_program,
     // get_proof_request_details).
     pub(crate) async fn prover_network_client(
         &self,
-    ) -> Result<AuctionProverNetworkClient<Channel>> {
+    ) -> Result<AuctionProverNetworkClient<GrpcChannel>>
+    {
         // For shared operations, we use the auction client type as it provides the default types.
         // The actual network routing is handled by the RPC URL which is correctly set based on
         // network_mode.
@@ -724,11 +785,12 @@ impl NetworkClient {
     // Helper methods for runtime proto type selection.
     pub(crate) async fn auction_prover_network_client(
         &self,
-    ) -> Result<AuctionProverNetworkClient<Channel>> {
+    ) -> Result<AuctionProverNetworkClient<GrpcChannel>>
+    {
         self.with_retry(
             || async {
                 let channel = grpc::configure_endpoint(&self.rpc_url)?.connect().await?;
-                Ok(AuctionProverNetworkClient::new(channel))
+                Ok(AuctionProverNetworkClient::new(self.connect_with_interceptor(channel)))
             },
             "creating auction network client",
         )
@@ -737,22 +799,26 @@ impl NetworkClient {
 
     pub(crate) async fn base_prover_network_client(
         &self,
-    ) -> Result<BaseProverNetworkClient<Channel>> {
+    ) -> Result<BaseProverNetworkClient<GrpcChannel>>
+    {
         self.with_retry(
             || async {
                 let channel = grpc::configure_endpoint(&self.rpc_url)?.connect().await?;
-                Ok(BaseProverNetworkClient::new(channel))
+                Ok(BaseProverNetworkClient::new(self.connect_with_interceptor(channel)))
             },
             "creating base network client",
         )
         .await
     }
 
-    pub(crate) async fn artifact_store_client(&self) -> Result<ArtifactStoreClient<Channel>> {
+    pub(crate) async fn artifact_store_client(
+        &self,
+    ) -> Result<ArtifactStoreClient<GrpcChannel>>
+    {
         self.with_retry(
             || async {
                 let channel = grpc::configure_endpoint(&self.rpc_url)?.connect().await?;
-                Ok(ArtifactStoreClient::new(channel))
+                Ok(ArtifactStoreClient::new(self.connect_with_interceptor(channel)))
             },
             "creating artifact client",
         )
@@ -761,7 +827,7 @@ impl NetworkClient {
 
     pub(crate) async fn create_artifact_with_content<T: Serialize + Send + Sync>(
         &self,
-        store: &mut ArtifactStoreClient<Channel>,
+        store: &mut ArtifactStoreClient<GrpcChannel>,
         artifact_type: ArtifactType,
         item: &T,
     ) -> Result<String> {
@@ -784,7 +850,7 @@ impl NetworkClient {
         self.with_retry(
             || async {
                 let response =
-                    self.http.put(&presigned_url).body(compressed.clone()).send().await?;
+                    self.gateway_put(&presigned_url).body(compressed.clone()).send().await?;
 
                 if !response.status().is_success() {
                     return Err(anyhow::anyhow!(
@@ -805,7 +871,7 @@ impl NetworkClient {
         self.with_retry(
             || async {
                 let response =
-                    self.http.get(uri).send().await.context("Failed to download from URI")?;
+                    self.gateway_get(uri).send().await.context("Failed to download from URI")?;
 
                 if !response.status().is_success() {
                     return Err(anyhow::anyhow!(
