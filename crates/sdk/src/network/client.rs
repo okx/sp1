@@ -732,6 +732,12 @@ impl NetworkClient {
         match super::gateway::build_gateway_headers(url) {
             Some(headers) => {
                 let rewritten = super::gateway::rewrite_url_for_gateway(url);
+                tracing::info!(
+                    original_url = %url,
+                    rewritten_url = %rewritten,
+                    third_host = ?headers.get("third-host"),
+                    "Gateway PUT request"
+                );
                 self.http.put(rewritten).headers(headers)
             }
             None => self.http.put(url),
@@ -743,6 +749,12 @@ impl NetworkClient {
         match super::gateway::build_gateway_headers(url) {
             Some(headers) => {
                 let rewritten = super::gateway::rewrite_url_for_gateway(url);
+                tracing::info!(
+                    original_url = %url,
+                    rewritten_url = %rewritten,
+                    third_host = ?headers.get("third-host"),
+                    "Gateway GET request"
+                );
                 self.http.get(rewritten).headers(headers)
             }
             None => self.http.get(url),
