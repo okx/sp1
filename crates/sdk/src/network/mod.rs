@@ -11,6 +11,7 @@ pub mod prover;
 pub mod proto;
 pub mod builder;
 mod error;
+pub mod gateway;
 mod grpc;
 pub mod prove;
 mod retry;
