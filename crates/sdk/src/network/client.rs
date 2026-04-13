@@ -738,7 +738,7 @@ impl NetworkClient {
     /// rewritten and `third-host` / `third-token` / `source-service` headers
     /// are injected with the *original* URL's host as `third-host`.
     fn gateway_put(&self, url: &str) -> reqwest_middleware::RequestBuilder {
-        match super::gateway::build_gateway_headers(url) {
+        match super::gateway::build_gateway_headers(url, super::gateway::GatewayTarget::HttpArtifact) {
             Some(headers) => {
                 let rewritten = super::gateway::rewrite_url_for_gateway(url);
                 tracing::info!(
@@ -755,7 +755,7 @@ impl NetworkClient {
 
     /// Build a GET request with the same gateway logic as [`Self::gateway_put`].
     fn gateway_get(&self, url: &str) -> reqwest_middleware::RequestBuilder {
-        match super::gateway::build_gateway_headers(url) {
+        match super::gateway::build_gateway_headers(url, super::gateway::GatewayTarget::HttpArtifact) {
             Some(headers) => {
                 let rewritten = super::gateway::rewrite_url_for_gateway(url);
                 tracing::info!(
