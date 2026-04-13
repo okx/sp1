@@ -15,7 +15,8 @@
 //! | Variable                      | Required | Description                              |
 //! |-------------------------------|----------|------------------------------------------|
 //! | `SP1_GATEWAY_HOST`            | yes      | Gateway origin, e.g. `http://gw:9080`    |
-//! | `SP1_GATEWAY_TOKEN`           | yes      | Value for the `third-token` header       |
+//! | `SP1_GATEWAY_TOKEN`           | yes      | `third-token` for gRPC requests          |
+//! | `SP1_GATEWAY_S3_TOKEN`        | no       | `third-token` for S3 requests (fallback: `SP1_GATEWAY_TOKEN`) |
 //! | `SP1_GATEWAY_SOURCE_SERVICE`  | yes      | Value for the `source-service` header    |
 //!
 //! When `SP1_GATEWAY_HOST` is **not** set, every helper in this module is a
@@ -25,14 +26,27 @@ use std::sync::OnceLock;
 
 use reqwest::header::{HeaderMap, HeaderValue};
 
+/// Identifies which authentication token to use for a gateway request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GatewayTarget {
+    /// gRPC calls to the SP1 Prover Network — uses `SP1_GATEWAY_TOKEN`.
+    Grpc,
+    /// HTTP artifact uploads/downloads (e.g. S3 presigned URLs) — uses
+    /// `SP1_GATEWAY_S3_TOKEN` when set, otherwise falls back to `SP1_GATEWAY_TOKEN`.
+    HttpArtifact,
+}
+
 /// Cached gateway configuration read once from the environment.
 #[derive(Debug, Clone)]
 pub struct GatewayConfig {
     /// Gateway base URL (e.g. `http://apisix.swimlane.svc.base.local:9080`).
     /// Must be a pure origin — no trailing path.
     pub gateway_host: String,
-    /// Value for the `third-token` header.
+    /// Value for the `third-token` header (gRPC / default).
     pub token: String,
+    /// Optional separate token for S3 / HTTP artifact requests.
+    /// Falls back to `token` when `None`.
+    pub s3_token: Option<String>,
     /// Value for the `source-service` header.
     pub source_service: String,
 }
@@ -51,16 +65,18 @@ pub fn get_gateway_config() -> Option<&'static GatewayConfig> {
 
             let token = std::env::var("SP1_GATEWAY_TOKEN")
                 .expect("SP1_GATEWAY_HOST is set but SP1_GATEWAY_TOKEN is missing");
+            let s3_token = std::env::var("SP1_GATEWAY_S3_TOKEN").ok().filter(|s| !s.is_empty());
             let source_service = std::env::var("SP1_GATEWAY_SOURCE_SERVICE")
                 .expect("SP1_GATEWAY_HOST is set but SP1_GATEWAY_SOURCE_SERVICE is missing");
 
             tracing::info!(
                 gateway_host = %gateway_host,
                 source_service = %source_service,
+                s3_token_configured = s3_token.is_some(),
                 "SP1 gateway proxy enabled"
             );
 
-            Some(GatewayConfig { gateway_host, token, source_service })
+            Some(GatewayConfig { gateway_host, token, s3_token, source_service })
         })
         .as_ref()
 }
@@ -132,12 +148,17 @@ pub fn rewrite_url_for_gateway(original_url: &str) -> String {
 /// `third-host` value so the gateway knows the upstream destination.
 ///
 /// Returns `None` when the gateway is not configured.
-pub fn build_gateway_headers(original_url: &str) -> Option<HeaderMap> {
+pub fn build_gateway_headers(original_url: &str, target: GatewayTarget) -> Option<HeaderMap> {
     let cfg = get_gateway_config()?;
     let third_host = extract_host(original_url);
 
+    let token = match target {
+        GatewayTarget::Grpc => &cfg.token,
+        GatewayTarget::HttpArtifact => cfg.s3_token.as_deref().unwrap_or(&cfg.token),
+    };
+
     let mut headers = HeaderMap::new();
-    if let Ok(v) = HeaderValue::from_str(&cfg.token) {
+    if let Ok(v) = HeaderValue::from_str(token) {
         headers.insert("third-token", v);
     }
     if let Ok(v) = HeaderValue::from_str(&third_host) {
