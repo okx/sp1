@@ -1,0 +1,202 @@
+{
+  "version": "1",
+  "generated_at": "2026-05-13 12:00:00",
+  "generated_by": "jianguo.zhu@okg.com",
+  "repo": {
+    "name": "sp1",
+    "remote_url": "git@gitlab.okg.com:github/sp1.git",
+    "branch": "zjg/context-kg"
+  },
+  "stack_hint": {
+    "primary_language": "rust",
+    "frameworks": ["plonky3-0.3.3-succinct", "tokio-1.42.0", "tonic-0.12.3"],
+    "runtime": "rust-stable-1.88",
+    "polyglot": {
+      "rust": "1039",
+      "cuda": "91",
+      "go": "17",
+      "toml": "111",
+      "markdown": "127",
+      "python": "2",
+      "javascript": "3"
+    }
+  },
+  "core_functions": [
+    "risc_v_execution",
+    "stark_proving",
+    "recursive_proof_composition",
+    "groth16_plonk_wrapping",
+    "proof_verification",
+    "polynomial_commitment",
+    "sumcheck_protocol",
+    "logup_gkr",
+    "merkle_tree_commitment",
+    "gpu_proving",
+    "network_proving",
+    "precompile_acceleration"
+  ],
+  "core_business": "SP1 is a high-performance zero-knowledge virtual machine (zkVM) that proves correct execution of arbitrary RISC-V programs. It generates succinct proofs (STARK, Groth16, PLONK) that can be verified on-chain. Used for blockchain rollups, verifiable computation, and privacy-preserving applications. Supports CPU, GPU, and remote network proving backends.",
+  "core_modules": [
+    {
+      "path": "crates/sdk",
+      "role": "core_business_module",
+      "description": "User-facing SDK with Prover trait and five backend variants (CPU, CUDA, Network, Mock, Light)",
+      "sub_modules": [
+        {
+          "path": "crates/sdk/src/cpu",
+          "function": "CPU-based local proving",
+          "key_components": ["CpuProver"]
+        },
+        {
+          "path": "crates/sdk/src/network",
+          "function": "Remote proving via Succinct network (gRPC)",
+          "key_components": ["NetworkProver", "NetworkClient"]
+        }
+      ]
+    },
+    {
+      "path": "crates/prover",
+      "role": "core_business_module",
+      "description": "Proving pipeline orchestration: task management, recursion program building, compress/shrink/wrap",
+      "sub_modules": [
+        {
+          "path": "crates/prover/src/worker",
+          "function": "Worker-based task orchestration (controller, prover, node)",
+          "key_components": ["SP1Controller", "SP1ProverComponents"]
+        },
+        {
+          "path": "crates/prover/src/recursion.rs",
+          "function": "Recursion program builders (normalize, compose, shrink, wrap)",
+          "key_components": ["RecursionVks"]
+        }
+      ]
+    },
+    {
+      "path": "crates/hypercube",
+      "role": "core_business_module",
+      "description": "Per-shard STARK proving: AIR, LogUp-GKR, zerocheck, PCS, SepticDigest global accumulation",
+      "sub_modules": [
+        {
+          "path": "crates/hypercube/src/prover",
+          "function": "Shard proof generation (trace, commit, sumcheck, eval proof)",
+          "key_components": ["ShardProver", "SimpleProver"]
+        },
+        {
+          "path": "crates/hypercube/src/verifier",
+          "function": "Shard and machine proof verification",
+          "key_components": ["MachineVerifier", "ShardVerifier"]
+        }
+      ]
+    },
+    {
+      "path": "crates/core/executor",
+      "role": "core_business_module",
+      "description": "Cycle-accurate RISC-V VM execution with precompile support and trace generation",
+      "sub_modules": [
+        {
+          "path": "crates/core/executor/src/vm.rs",
+          "function": "RISC-V virtual machine (ALU, branch, jump, syscall)",
+          "key_components": ["CoreVM"]
+        },
+        {
+          "path": "crates/core/executor/src/minimal",
+          "function": "Optimized executor with architecture-specific paths (x86_64, portable)",
+          "key_components": ["MinimalExecutor"]
+        }
+      ]
+    },
+    {
+      "path": "crates/core/machine",
+      "role": "core_business_module",
+      "description": "AIR constraint columns and RISC-V chip definitions with TrustMode dispatch",
+      "sub_modules": []
+    },
+    {
+      "path": "crates/recursion",
+      "role": "core_business_module",
+      "description": "Recursive proof composition: circuit DSL, compiler, executor, machine, Gnark FFI",
+      "sub_modules": [
+        {
+          "path": "crates/recursion/circuit",
+          "function": "Recursion circuit definitions and recursive verifiers",
+          "key_components": ["CircuitConfig", "SP1RecursiveVerifier"]
+        },
+        {
+          "path": "crates/recursion/gnark-ffi",
+          "function": "Gnark bridge for Groth16/PLONK BN254 wrapping",
+          "key_components": ["Groth16Bn254Prover", "PlonkBn254Prover"]
+        }
+      ]
+    },
+    {
+      "path": "crates/verifier",
+      "role": "core_business_module",
+      "description": "no_std Groth16 and PLONK proof verification with embedded vkeys",
+      "sub_modules": []
+    },
+    {
+      "path": "crates/primitives",
+      "role": "shared_library",
+      "description": "Core type aliases (SP1Field, SP1ExtensionField), Poseidon2 hash, IopCtx contexts",
+      "sub_modules": []
+    },
+    {
+      "path": "slop/crates",
+      "role": "shared_library",
+      "description": "Low-level cryptographic primitives: field algebra, polynomials, PCS, hash, commitment, tensor",
+      "sub_modules": [
+        {
+          "path": "slop/crates/multilinear",
+          "function": "Multilinear extension (MLE) representation and evaluation",
+          "key_components": ["Mle", "Point", "MleEval"]
+        },
+        {
+          "path": "slop/crates/sumcheck",
+          "function": "Sumcheck protocol implementation",
+          "key_components": ["SumcheckProver", "SumcheckVerifier"]
+        },
+        {
+          "path": "slop/crates/jagged",
+          "function": "Variable-size polynomial commitment scheme",
+          "key_components": ["JaggedProver", "JaggedPcsVerifier"]
+        },
+        {
+          "path": "slop/crates/merkle-tree",
+          "function": "Merkle tree and tensor commitment scheme",
+          "key_components": ["MerkleTreeTcs", "TensorCsProver"]
+        }
+      ]
+    },
+    {
+      "path": "crates/build",
+      "role": "packaging_bootstrap",
+      "description": "Build-script helper for compiling SP1 programs to RISC-V ELF",
+      "sub_modules": []
+    },
+    {
+      "path": "crates/cuda",
+      "role": "core_business_module",
+      "description": "Client-server wrapper for GPU-accelerated proving",
+      "sub_modules": []
+    },
+    {
+      "path": "crates/zkvm",
+      "role": "shared_library",
+      "description": "Guest-side library and entrypoint for programs running inside the zkVM",
+      "sub_modules": []
+    },
+    {
+      "path": "sp1-gpu/crates",
+      "role": "core_business_module",
+      "description": "GPU-accelerated implementations of proving components (CUDA kernels)",
+      "sub_modules": []
+    },
+    {
+      "path": "crates/test-artifacts",
+      "role": "test_support",
+      "description": "Test ELF artifacts for integration and end-to-end testing",
+      "sub_modules": []
+    }
+  ],
+  "summary": "SP1: Rust zkVM proving RISC-V execution via STARKs (Hypercube), recursive composition, Groth16/PLONK wrapping. KoalaBear field, Plonky3 fork, CPU/GPU/Network backends."
+}
