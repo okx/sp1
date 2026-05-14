@@ -2,7 +2,8 @@
 **/target
 
 # Cargo config
-.cargo
+.cargo/*
+!.cargo/config.toml
 
 # Profile-guided optimization
 /tmp
@@ -67,3 +68,4 @@ examples/fibonacci/fibonacci-plonk.bin
 # Local agent documents
 .claude/local/**
 .claude/settings.json
+.claude/settings.local.json
